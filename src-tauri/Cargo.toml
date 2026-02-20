@@ -1,6 +1,6 @@
 [package]
 name = "vivaspot-setup-assistant"
-version = "0.2.1"
+version = "0.2.2"
 description = "VivaSpot Setup Assistant — discovers and adopts UniFi APs"
 authors = ["VivaSpot <support@vivaspot.com>"]
 license = "proprietary"

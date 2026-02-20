@@ -43,7 +43,12 @@ pub async fn set_inform(
     custom_password: Option<&str>,
 ) -> Result<String, SshError> {
     let password = custom_password.unwrap_or(DEFAULT_PASSWORD);
-    let ssh_command = format!("set-inform {}", inform_url);
+    // Try multiple command paths — on some firmware versions set-inform
+    // isn't in PATH. The mca-cli-op command is the standard way on managed APs.
+    let ssh_command = format!(
+        "set-inform {url} 2>/dev/null || mca-cli-op set-inform {url} 2>/dev/null || /usr/bin/mca-cli-op set-inform {url} 2>/dev/null || syswrapper.sh set-inform {url} 2>/dev/null || /usr/bin/syswrapper.sh set-inform {url}",
+        url = inform_url
+    );
 
     log::info!("Connecting to {} via system SSH (expect)...", ip);
 

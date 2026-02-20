@@ -132,7 +132,11 @@ pub async fn set_inform(
 
     log::info!("Authenticated to {}, executing set-inform...", ip);
 
-    let command = format!("set-inform {}", inform_url);
+    // Try multiple command paths — set-inform may not be in PATH on all firmware
+    let command = format!(
+        "set-inform {url} 2>/dev/null || mca-cli-op set-inform {url} 2>/dev/null || /usr/bin/mca-cli-op set-inform {url} 2>/dev/null || syswrapper.sh set-inform {url} 2>/dev/null || /usr/bin/syswrapper.sh set-inform {url}",
+        url = inform_url
+    );
 
     let mut channel = handle
         .channel_open_session()
