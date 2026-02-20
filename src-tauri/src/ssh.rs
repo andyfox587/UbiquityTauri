@@ -79,10 +79,12 @@ pub async fn set_inform(
             kex::DH_G1_SHA1,
         ]),
         key: Cow::Owned(vec![
-            // Prioritize ssh-rsa variants since UniFi APs typically only have RSA host keys
+            // ssh-rsa (SHA-1) MUST be first — older UniFi AP firmware advertises
+            // rsa-sha2-256 support but actually signs with SHA-1, causing signature
+            // verification to fail. By negotiating ssh-rsa, both sides use SHA-1.
+            Algorithm::Rsa { hash: None }, // ssh-rsa (SHA-1)
             Algorithm::Rsa { hash: Some(HashAlg::Sha256) },
             Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
-            Algorithm::Rsa { hash: None }, // ssh-rsa (SHA-1)
             Algorithm::Ed25519,
             Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 },
             Algorithm::Ecdsa { curve: EcdsaCurve::NistP384 },
