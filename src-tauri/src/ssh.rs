@@ -11,7 +11,7 @@ use std::sync::Arc;
 use russh::*;
 use russh::kex;
 use russh::Preferred;
-use russh_keys::ssh_key::{Algorithm, EcdsaCurve, HashAlg};
+use russh_keys::ssh_key::{Algorithm, EcdsaCurve};
 
 const SSH_PORT: u16 = 22;
 const DEFAULT_USERNAME: &str = "ubnt";
@@ -65,9 +65,15 @@ pub async fn set_inform(
 
     log::info!("Connecting to {} via SSH...", ip);
 
-    // Configure SSH to accept legacy algorithms used by older UniFi APs.
-    // Factory-default APs often only support diffie-hellman-group14-sha1 for kex
-    // and ssh-rsa (SHA-1) for host keys. The russh defaults exclude these.
+    // Configure SSH for compatibility with UniFi APs (Dropbear SSH).
+    //
+    // IMPORTANT: russh 0.48 has a bug where it always verifies RSA signatures
+    // using SHA-1 (via sig_workaround.rs), regardless of the negotiated host key
+    // algorithm. If rsa-sha2-256 is negotiated, the server signs with SHA-256
+    // but russh verifies with SHA-1 → "Wrong server signature".
+    //
+    // Workaround: only offer ssh-rsa (SHA-1) for host keys so both sides
+    // agree on SHA-1 signing. Also include legacy kex algorithms.
     let mut config = client::Config::default();
     config.preferred = Preferred {
         kex: Cow::Owned(vec![
@@ -79,12 +85,9 @@ pub async fn set_inform(
             kex::DH_G1_SHA1,
         ]),
         key: Cow::Owned(vec![
-            // ssh-rsa (SHA-1) MUST be first — older UniFi AP firmware advertises
-            // rsa-sha2-256 support but actually signs with SHA-1, causing signature
-            // verification to fail. By negotiating ssh-rsa, both sides use SHA-1.
-            Algorithm::Rsa { hash: None }, // ssh-rsa (SHA-1)
-            Algorithm::Rsa { hash: Some(HashAlg::Sha256) },
-            Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
+            // ONLY offer ssh-rsa (SHA-1) for RSA keys due to the russh bug above.
+            // Do NOT include rsa-sha2-256 or rsa-sha2-512.
+            Algorithm::Rsa { hash: None },
             Algorithm::Ed25519,
             Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 },
             Algorithm::Ecdsa { curve: EcdsaCurve::NistP384 },
