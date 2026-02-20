@@ -83,6 +83,8 @@ pub async fn set_inform(
             kex::DH_G14_SHA256,
             kex::DH_G14_SHA1,
             kex::DH_G1_SHA1,
+            kex::EXTENSION_SUPPORT_AS_CLIENT,
+            kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
         ]),
         key: Cow::Owned(vec![
             // ONLY offer ssh-rsa (SHA-1) for RSA keys due to the russh bug above.

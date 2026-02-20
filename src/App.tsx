@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import CodeEntry from "./components/CodeEntry";
 import Scanner from "./components/Scanner";
 import DeviceCard from "./components/DeviceCard";
@@ -36,6 +36,11 @@ export default function App() {
   const [siteInfo, setSiteInfo] = useState<SiteInfo | null>(null);
   const [devices, setDevices] = useState<Device[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    invoke<string>("get_app_version").then(setAppVersion).catch(() => {});
+  }, []);
 
   const handleCodeSubmit = async (code: string) => {
     setError(null);
@@ -103,6 +108,11 @@ export default function App() {
           <div>
             <h1 className="text-lg font-bold text-vivaspot-dark">
               VivaSpot Setup Assistant
+              {appVersion && (
+                <span className="text-xs font-normal text-gray-400 ml-2">
+                  v{appVersion}
+                </span>
+              )}
             </h1>
             {siteInfo && (
               <p className="text-xs text-gray-500">

@@ -1,6 +1,7 @@
 mod api;
 mod discovery;
 mod ssh;
+mod ssh_process;
 
 use serde::Serialize;
 
@@ -61,6 +62,8 @@ async fn scan_devices() -> Result<ScanResult, String> {
 }
 
 /// Execute set-inform on an AP via SSH.
+/// Uses the system ssh command (via ssh_process) for maximum compatibility
+/// with Dropbear SSH on UniFi APs. Falls back to russh library if that fails.
 #[tauri::command]
 async fn adopt_device(
     ip: String,
@@ -69,6 +72,22 @@ async fn adopt_device(
 ) -> Result<AdoptResult, String> {
     let password_ref = custom_password.as_deref();
 
+    // Try system SSH first (uses macOS OpenSSH, proven compatible with Dropbear)
+    log::info!("Attempting SSH via system command...");
+    match ssh_process::set_inform(&ip, &inform_url, password_ref).await {
+        Ok(output) => {
+            log::info!("System SSH succeeded");
+            return Ok(AdoptResult {
+                success: true,
+                output,
+            });
+        }
+        Err(e) => {
+            log::warn!("System SSH failed: {}, trying russh library...", e);
+        }
+    }
+
+    // Fallback to russh library
     let output = ssh::set_inform(&ip, &inform_url, password_ref)
         .await
         .map_err(|e| e.to_string())?;
@@ -77,6 +96,12 @@ async fn adopt_device(
         success: true,
         output,
     })
+}
+
+/// Return the app version for display in the UI.
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 // ============================================================
@@ -100,6 +125,7 @@ pub fn run() {
             validate_code,
             scan_devices,
             adopt_device,
+            get_app_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
