@@ -4,6 +4,7 @@ import { Wifi, Lock, ChevronDown, ChevronUp } from "lucide-react";
 interface Device {
   mac: string;
   ip: string;
+  reportedIp: string;
   model: string;
   firmware: string;
   hostname: string;

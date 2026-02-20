@@ -15,6 +15,7 @@ interface SiteInfo {
 interface Device {
   mac: string;
   ip: string;
+  reportedIp: string;
   model: string;
   firmware: string;
   hostname: string;

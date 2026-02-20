@@ -23,9 +23,13 @@ const TLV_MODEL: u8 = 0x14;
 const TLV_PLATFORM: u8 = 0x0B;
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DiscoveredDevice {
     pub mac: String,
+    /// The LAN IP we can actually reach (UDP packet source address)
     pub ip: String,
+    /// The IP reported in the TLV payload (may be WAN IP — for display only)
+    pub reported_ip: String,
     pub model: String,
     pub firmware: String,
     pub hostname: String,
@@ -111,7 +115,7 @@ fn parse_tlv_response(data: &[u8], source_ip: &str) -> Option<DiscoveredDevice> 
     }
 
     let mut mac = String::new();
-    let mut ip = source_ip.to_string();
+    let mut reported_ip = source_ip.to_string();
     let mut model = String::new();
     let mut firmware = String::new();
     let mut hostname = String::new();
@@ -143,7 +147,7 @@ fn parse_tlv_response(data: &[u8], source_ip: &str) -> Option<DiscoveredDevice> 
             }
             TLV_IP_INFO => {
                 if field_len >= 4 {
-                    ip = format!(
+                    reported_ip = format!(
                         "{}.{}.{}.{}",
                         field_data[0], field_data[1], field_data[2], field_data[3]
                     );
@@ -176,7 +180,8 @@ fn parse_tlv_response(data: &[u8], source_ip: &str) -> Option<DiscoveredDevice> 
 
     Some(DiscoveredDevice {
         mac,
-        ip,
+        ip: source_ip.to_string(),
+        reported_ip,
         model,
         firmware,
         hostname,
