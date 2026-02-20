@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+@theme {
+  --color-vivaspot-primary: #2b7bb9;
+  --color-vivaspot-primary-dark: #1e5a8a;
+  --color-vivaspot-dark: #2d3748;
+  --color-vivaspot-light: #f0f7ff;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #f9fafb;
+  user-select: none;
+  -webkit-user-select: none;
+}
