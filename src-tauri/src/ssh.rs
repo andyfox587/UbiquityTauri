@@ -6,8 +6,12 @@
 /// 3. Execute: set-inform <inform_url>
 /// 4. Parse response to confirm success
 /// 5. Disconnect
+use std::borrow::Cow;
 use std::sync::Arc;
 use russh::*;
+use russh::kex;
+use russh::Preferred;
+use russh_keys::ssh_key::{Algorithm, EcdsaCurve, HashAlg};
 
 const SSH_PORT: u16 = 22;
 const DEFAULT_USERNAME: &str = "ubnt";
@@ -61,7 +65,32 @@ pub async fn set_inform(
 
     log::info!("Connecting to {} via SSH...", ip);
 
-    let config = Arc::new(client::Config::default());
+    // Configure SSH to accept legacy algorithms used by older UniFi APs.
+    // Factory-default APs often only support diffie-hellman-group14-sha1 for kex
+    // and ssh-rsa (SHA-1) for host keys. The russh defaults exclude these.
+    let mut config = client::Config::default();
+    config.preferred = Preferred {
+        kex: Cow::Owned(vec![
+            kex::CURVE25519,
+            kex::CURVE25519_PRE_RFC_8731,
+            kex::DH_G16_SHA512,
+            kex::DH_G14_SHA256,
+            kex::DH_G14_SHA1,
+            kex::DH_G1_SHA1,
+        ]),
+        key: Cow::Owned(vec![
+            // Prioritize ssh-rsa variants since UniFi APs typically only have RSA host keys
+            Algorithm::Rsa { hash: Some(HashAlg::Sha256) },
+            Algorithm::Rsa { hash: Some(HashAlg::Sha512) },
+            Algorithm::Rsa { hash: None }, // ssh-rsa (SHA-1)
+            Algorithm::Ed25519,
+            Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 },
+            Algorithm::Ecdsa { curve: EcdsaCurve::NistP384 },
+            Algorithm::Ecdsa { curve: EcdsaCurve::NistP521 },
+        ]),
+        ..config.preferred
+    };
+    let config = Arc::new(config);
 
     let addr = format!("{}:{}", ip, SSH_PORT);
 
