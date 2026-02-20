@@ -1,10 +1,11 @@
 /// SSH client using the system `ssh` command for maximum compatibility.
 ///
-/// This is a fallback approach that shells out to the macOS OpenSSH binary
-/// instead of using the russh library. This avoids signature verification
-/// bugs in russh 0.48 with Dropbear SSH servers (used by UniFi APs).
+/// This shells out to the macOS OpenSSH binary instead of using the russh
+/// library, avoiding signature verification bugs in russh 0.48 with
+/// Dropbear SSH servers (used by UniFi APs).
 ///
-/// Password authentication is handled via SSH_ASKPASS with a helper script.
+/// Password authentication is handled via an `expect` script (macOS ships
+/// with expect pre-installed as part of the developer tools / Tcl).
 use std::process::Stdio;
 use tokio::process::Command;
 
@@ -34,7 +35,7 @@ impl std::fmt::Display for SshError {
     }
 }
 
-/// Execute set-inform on an AP via SSH using the system ssh command.
+/// Execute set-inform on an AP via SSH using the system ssh + expect.
 /// Uses factory-default credentials unless a custom password is provided.
 pub async fn set_inform(
     ip: &str,
@@ -42,138 +43,151 @@ pub async fn set_inform(
     custom_password: Option<&str>,
 ) -> Result<String, SshError> {
     let password = custom_password.unwrap_or(DEFAULT_PASSWORD);
-    let command = format!("set-inform {}", inform_url);
+    let ssh_command = format!("set-inform {}", inform_url);
 
-    log::info!("Connecting to {} via system SSH (sshpass)...", ip);
+    log::info!("Connecting to {} via system SSH (expect)...", ip);
 
-    // First, check if sshpass is available
-    let use_sshpass = Command::new("which")
-        .arg("sshpass")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
+    // Build an expect script that handles SSH password authentication.
+    // macOS ships with expect as part of Tcl (/usr/bin/expect).
+    let expect_script = format!(
+        r#"#!/usr/bin/expect -f
+set timeout {timeout}
+spawn ssh -o StrictHostKeyChecking=no \
+    -o UserKnownHostsFile=/dev/null \
+    -o PubkeyAuthentication=no \
+    -o HostKeyAlgorithms=+ssh-rsa \
+    -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+    -o ConnectTimeout={timeout} \
+    -p {port} \
+    {user}@{host} "{cmd}"
+
+expect {{
+    "assword:" {{
+        send "{pass}\r"
+        expect {{
+            "assword:" {{
+                puts stderr "AUTH_FAILED"
+                exit 1
+            }}
+            eof {{
+                catch wait result
+                exit [lindex $result 3]
+            }}
+        }}
+    }}
+    "Connection refused" {{
+        puts stderr "CONNECTION_REFUSED"
+        exit 1
+    }}
+    timeout {{
+        puts stderr "CONNECTION_TIMEOUT"
+        exit 1
+    }}
+    eof {{
+        catch wait result
+        exit [lindex $result 3]
+    }}
+}}
+"#,
+        timeout = CONNECT_TIMEOUT_SECS,
+        port = SSH_PORT,
+        user = DEFAULT_USERNAME,
+        host = ip,
+        cmd = ssh_command.replace('"', r#"\""#),
+        pass = password.replace('\\', r"\\").replace('"', r#"\""#),
+    );
+
+    // Write the expect script to a temp file
+    let script_dir = std::env::temp_dir();
+    let script_path = script_dir.join("vivaspot_ssh.exp");
+
+    tokio::fs::write(&script_path, &expect_script)
         .await
-        .map(|s| s.success())
-        .unwrap_or(false);
+        .map_err(|e| SshError::Other(format!("Failed to write expect script: {}", e)))?;
 
-    let output = if use_sshpass {
-        // Use sshpass for password auth
-        log::info!("Using sshpass for authentication");
-        tokio::time::timeout(
-            std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS + 5),
-            Command::new("sshpass")
-                .arg("-p")
-                .arg(password)
-                .arg("ssh")
-                .arg("-o").arg("StrictHostKeyChecking=no")
-                .arg("-o").arg("UserKnownHostsFile=/dev/null")
-                .arg("-o").arg(format!("ConnectTimeout={}", CONNECT_TIMEOUT_SECS))
-                .arg("-o").arg("HostKeyAlgorithms=+ssh-rsa")
-                .arg("-o").arg("PubkeyAcceptedAlgorithms=+ssh-rsa")
-                .arg("-o").arg("PubkeyAuthentication=no")
-                .arg("-p").arg(SSH_PORT.to_string())
-                .arg(format!("{}@{}", DEFAULT_USERNAME, ip))
-                .arg(&command)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-        )
-        .await
-        .map_err(|_| SshError::ConnectionTimeout(format!("Timed out connecting to {}", ip)))?
-        .map_err(|e| SshError::Other(format!("Failed to run sshpass: {}", e)))?
-    } else {
-        // Fallback: use SSH_ASKPASS with a temporary script
-        log::info!("sshpass not found, using SSH_ASKPASS method");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o700);
+        std::fs::set_permissions(&script_path, perms)
+            .map_err(|e| SshError::Other(format!("Failed to chmod script: {}", e)))?;
+    }
 
-        // Create a temporary askpass script that echoes the password
-        let askpass_dir = std::env::temp_dir();
-        let askpass_path = askpass_dir.join("vivaspot_askpass.sh");
-        let askpass_content = format!("#!/bin/sh\necho '{}'", password.replace('\'', "'\\''"));
+    // Run the expect script
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS + 10),
+        Command::new("expect")
+            .arg(script_path.to_str().unwrap_or(""))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output(),
+    )
+    .await
+    .map_err(|_| SshError::ConnectionTimeout(format!("Timed out connecting to {}", ip)))?
+    .map_err(|e| SshError::Other(format!("Failed to run expect: {}", e)))?;
 
-        tokio::fs::write(&askpass_path, &askpass_content)
-            .await
-            .map_err(|e| SshError::Other(format!("Failed to create askpass script: {}", e)))?;
-
-        // Make it executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let perms = std::fs::Permissions::from_mode(0o700);
-            std::fs::set_permissions(&askpass_path, perms)
-                .map_err(|e| SshError::Other(format!("Failed to chmod askpass: {}", e)))?;
-        }
-
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS + 5),
-            Command::new("ssh")
-                .arg("-o").arg("StrictHostKeyChecking=no")
-                .arg("-o").arg("UserKnownHostsFile=/dev/null")
-                .arg("-o").arg(format!("ConnectTimeout={}", CONNECT_TIMEOUT_SECS))
-                .arg("-o").arg("HostKeyAlgorithms=+ssh-rsa")
-                .arg("-o").arg("PubkeyAcceptedAlgorithms=+ssh-rsa")
-                .arg("-o").arg("PubkeyAuthentication=no")
-                .arg("-o").arg("NumberOfPasswordPrompts=1")
-                .arg("-p").arg(SSH_PORT.to_string())
-                .arg(format!("{}@{}", DEFAULT_USERNAME, ip))
-                .arg(&command)
-                .env("SSH_ASKPASS", askpass_path.to_str().unwrap_or(""))
-                .env("SSH_ASKPASS_REQUIRE", "force")
-                .env("DISPLAY", ":0")
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
-        )
-        .await
-        .map_err(|_| SshError::ConnectionTimeout(format!("Timed out connecting to {}", ip)))?
-        .map_err(|e| SshError::Other(format!("Failed to run ssh: {}", e)))?;
-
-        // Clean up askpass script
-        let _ = tokio::fs::remove_file(&askpass_path).await;
-
-        result
-    };
+    // Clean up
+    let _ = tokio::fs::remove_file(&script_path).await;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-    log::info!("SSH stdout: {}", stdout.trim());
-    log::info!("SSH stderr: {}", stderr.trim());
+    log::info!("expect stdout: {}", stdout.trim());
+    log::info!("expect stderr: {}", stderr.trim());
 
     if !output.status.success() {
-        let combined = format!("{}\n{}", stdout, stderr).trim().to_string();
-
-        if combined.contains("Permission denied") || combined.contains("Authentication failed") {
+        if stderr.contains("AUTH_FAILED") || stdout.contains("Permission denied") {
             return Err(SshError::AuthFailed(format!(
                 "Authentication failed for {} — password may have been changed from factory default",
-                ip
+                ip,
             )));
         }
-        if combined.contains("Connection refused") {
+        if stderr.contains("CONNECTION_REFUSED") || stdout.contains("Connection refused") {
             return Err(SshError::ConnectionRefused(format!(
-                "Connection refused at {}", ip
+                "Connection refused at {}",
+                ip,
             )));
         }
-        if combined.contains("timed out") || combined.contains("Connection timeout") {
+        if stderr.contains("CONNECTION_TIMEOUT") || stdout.contains("timed out") {
             return Err(SshError::ConnectionTimeout(format!(
-                "Timed out connecting to {}", ip
+                "Timed out connecting to {}",
+                ip,
             )));
         }
 
+        let combined = format!("{}\n{}", stdout.trim(), stderr.trim());
         return Err(SshError::Other(format!(
             "Failed to connect to {}: {}",
             ip,
-            combined
+            combined.trim(),
         )));
     }
 
-    // Any output without "error" is generally success
-    if stdout.to_lowercase().contains("error") && !stdout.to_lowercase().contains("inform") {
+    // Filter out expect's echoed output (the spawn line, password prompt, etc.)
+    // The actual set-inform output is what comes after the password was sent.
+    let useful_output: String = stdout
+        .lines()
+        .filter(|line| {
+            !line.starts_with("spawn ")
+                && !line.contains("assword:")
+                && !line.contains("Warning: Permanently added")
+                && !line.trim().is_empty()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    log::info!("set-inform result: {}", useful_output.trim());
+
+    // Check for errors in the output
+    if useful_output.to_lowercase().contains("error")
+        && !useful_output.to_lowercase().contains("inform")
+    {
         return Err(SshError::CommandFailed(format!(
             "set-inform returned an error: {}",
-            stdout.trim()
+            useful_output.trim(),
         )));
     }
 
-    Ok(stdout.trim().to_string())
+    Ok(useful_output.trim().to_string())
 }

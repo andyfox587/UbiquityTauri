@@ -72,8 +72,8 @@ async fn adopt_device(
 ) -> Result<AdoptResult, String> {
     let password_ref = custom_password.as_deref();
 
-    // Try system SSH first (uses macOS OpenSSH, proven compatible with Dropbear)
-    log::info!("Attempting SSH via system command...");
+    // Try system SSH first (uses macOS OpenSSH via expect, proven compatible with Dropbear)
+    log::info!("Attempting SSH via system expect command...");
     match ssh_process::set_inform(&ip, &inform_url, password_ref).await {
         Ok(output) => {
             log::info!("System SSH succeeded");
@@ -83,19 +83,35 @@ async fn adopt_device(
             });
         }
         Err(e) => {
-            log::warn!("System SSH failed: {}, trying russh library...", e);
+            let err_str = e.to_string();
+            log::warn!("System SSH failed: {}", err_str);
+
+            // If it's an auth failure, don't bother with russh — report it directly
+            if matches!(e, ssh_process::SshError::AuthFailed(_)) {
+                return Err(err_str);
+            }
+
+            // For other failures (e.g. expect not found), try russh as fallback
+            log::info!("Falling back to russh library...");
+            match ssh::set_inform(&ip, &inform_url, password_ref).await {
+                Ok(output) => {
+                    return Ok(AdoptResult {
+                        success: true,
+                        output,
+                    });
+                }
+                Err(russh_err) => {
+                    // Return whichever error is more informative
+                    let russh_str = russh_err.to_string();
+                    log::warn!("russh also failed: {}", russh_str);
+                    return Err(format!(
+                        "SSH error: Failed to connect to {}: {}",
+                        ip, err_str
+                    ));
+                }
+            }
         }
     }
-
-    // Fallback to russh library
-    let output = ssh::set_inform(&ip, &inform_url, password_ref)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(AdoptResult {
-        success: true,
-        output,
-    })
 }
 
 /// Return the app version for display in the UI.
