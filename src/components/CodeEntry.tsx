@@ -1,14 +1,31 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { KeyRound } from "lucide-react";
 
 interface CodeEntryProps {
-  onSubmit: (code: string) => void;
+  onSubmit: (code: string) => void | Promise<void>;
   error: string | null;
+  initialCode?: string | null;
 }
 
-export default function CodeEntry({ onSubmit, error }: CodeEntryProps) {
+export default function CodeEntry({ onSubmit, error, initialCode }: CodeEntryProps) {
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const autoSubmittedRef = useRef(false);
+
+  // Auto-fill and auto-submit when launched via deep link
+  useEffect(() => {
+    if (initialCode && !autoSubmittedRef.current) {
+      autoSubmittedRef.current = true;
+      setCode(initialCode);
+      setLoading(true);
+      const result = onSubmit(initialCode.trim().toUpperCase());
+      if (result && typeof result.then === "function") {
+        result.finally(() => setLoading(false));
+      } else {
+        setLoading(false);
+      }
+    }
+  }, [initialCode, onSubmit]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,12 +57,18 @@ export default function CodeEntry({ onSubmit, error }: CodeEntryProps) {
 
       <div>
         <h2 className="text-2xl font-bold text-vivaspot-dark">
-          Enter your setup code
+          {initialCode ? "Connecting..." : "Enter your setup code"}
         </h2>
         <p className="text-sm text-gray-600 mt-2">
-          You'll find this code in the VivaSpot setup wizard in your browser.
-          <br />
-          It looks like <span className="font-mono font-bold">VS-7K2M</span>.
+          {initialCode ? (
+            <>Validating setup code <span className="font-mono font-bold">{initialCode}</span>...</>
+          ) : (
+            <>
+              You'll find this code in the VivaSpot setup wizard in your browser.
+              <br />
+              It looks like <span className="font-mono font-bold">VS-7K2M</span>.
+            </>
+          )}
         </p>
       </div>
 

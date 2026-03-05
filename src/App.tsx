@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import CodeEntry from "./components/CodeEntry";
 import Scanner from "./components/Scanner";
 import DeviceCard from "./components/DeviceCard";
 import { invoke } from "@tauri-apps/api/core";
+import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 
 type AppState = "code-entry" | "scanning" | "results" | "complete";
 
@@ -37,10 +38,39 @@ export default function App() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
+  const [deepLinkCode, setDeepLinkCode] = useState<string | null>(null);
 
   useEffect(() => {
     invoke<string>("get_app_version").then(setAppVersion).catch(() => {});
   }, []);
+
+  /** Extract setup code from a vivaspot:// deep link URL */
+  const parseDeepLinkCode = useCallback((url: string): string | null => {
+    try {
+      // URL format: vivaspot://setup?code=VS-XXXX
+      // Replace vivaspot:// with https:// so URL parser works
+      const parsed = new URL(url.replace(/^vivaspot:\/\//, "https://dummy/"));
+      return parsed.searchParams.get("code");
+    } catch {
+      return null;
+    }
+  }, []);
+
+  // Listen for deep link events (app launched via vivaspot:// URL)
+  useEffect(() => {
+    const unlistenPromise = onOpenUrl((urls: string[]) => {
+      if (urls.length > 0) {
+        const code = parseDeepLinkCode(urls[0]);
+        if (code) {
+          setDeepLinkCode(code);
+        }
+      }
+    });
+
+    return () => {
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [parseDeepLinkCode]);
 
   const handleCodeSubmit = async (code: string) => {
     setError(null);
@@ -127,7 +157,11 @@ export default function App() {
       <main className="flex-1 flex items-center justify-center p-6">
         <div className="w-full max-w-lg">
           {state === "code-entry" && (
-            <CodeEntry onSubmit={handleCodeSubmit} error={error} />
+            <CodeEntry
+              onSubmit={handleCodeSubmit}
+              error={error}
+              initialCode={deepLinkCode}
+            />
           )}
 
           {state === "scanning" && <Scanner />}
