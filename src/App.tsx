@@ -91,23 +91,34 @@ export default function App() {
       const result = await invoke<SiteInfo>("validate_code", { code });
       setSiteInfo(result);
       setState("scanning");
+      // Small delay before first scan when app just launched (network may not be ready)
+      await new Promise((r) => setTimeout(r, 1500));
       handleScan();
     } catch (err) {
       setError(String(err));
     }
   };
 
-  const handleScan = async () => {
-    setState("scanning");
-    setError(null);
+  const doScan = async (retryCount: number): Promise<void> => {
     try {
       const result = await invoke<ScanResult>("scan_devices");
       setDevices(result.devices);
       setState("results");
     } catch (err) {
+      // Auto-retry once on network errors (common on cold launch)
+      if (retryCount < 1) {
+        await new Promise((r) => setTimeout(r, 2000));
+        return doScan(retryCount + 1);
+      }
       setError(String(err));
       setState("results");
     }
+  };
+
+  const handleScan = async () => {
+    setState("scanning");
+    setError(null);
+    await doScan(0);
   };
 
   const handleAdopt = async (ip: string) => {
