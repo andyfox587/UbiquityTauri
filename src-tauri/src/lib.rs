@@ -3,7 +3,10 @@ mod discovery;
 mod ssh;
 mod ssh_process;
 
+use std::sync::Mutex;
 use serde::Serialize;
+use tauri::Manager;
+use tauri_plugin_deep_link::DeepLinkExt;
 
 // ============================================================
 // Tauri command return types
@@ -120,6 +123,17 @@ fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// State to hold the initial deep link URL that launched the app.
+/// Consumed once by the frontend on mount.
+struct InitialDeepLink(Mutex<Option<String>>);
+
+/// Get the deep link URL that was used to launch the app (if any).
+/// Returns the URL once, then clears it.
+#[tauri::command]
+fn get_initial_deep_link(state: tauri::State<'_, InitialDeepLink>) -> Option<String> {
+    state.0.lock().unwrap().take()
+}
+
 // ============================================================
 // App entry point
 // ============================================================
@@ -128,6 +142,7 @@ fn get_app_version() -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
+        .manage(InitialDeepLink(Mutex::new(None)))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -136,6 +151,20 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            // Capture the deep link URL that launched the app (if any).
+            // This must happen in setup() because the JS onOpenUrl listener
+            // won't be registered until after React mounts.
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                if let Some(url) = urls.first() {
+                    let url_str = url.to_string();
+                    log::info!("App launched via deep link: {}", url_str);
+                    if let Some(state) = app.try_state::<InitialDeepLink>() {
+                        *state.0.lock().unwrap() = Some(url_str);
+                    }
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -143,6 +172,7 @@ pub fn run() {
             scan_devices,
             adopt_device,
             get_app_version,
+            get_initial_deep_link,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

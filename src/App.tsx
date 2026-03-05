@@ -56,7 +56,20 @@ export default function App() {
     }
   }, []);
 
-  // Listen for deep link events (app launched via vivaspot:// URL)
+  // Check for initial deep link URL (app launched via vivaspot:// URL).
+  // This is stored in Rust state because the URL arrives before React mounts.
+  useEffect(() => {
+    invoke<string | null>("get_initial_deep_link").then((url) => {
+      if (url) {
+        const code = parseDeepLinkCode(url);
+        if (code) {
+          setDeepLinkCode(code);
+        }
+      }
+    }).catch(() => {});
+  }, [parseDeepLinkCode]);
+
+  // Also listen for runtime deep link events (app already running)
   useEffect(() => {
     const unlistenPromise = onOpenUrl((urls: string[]) => {
       if (urls.length > 0) {
