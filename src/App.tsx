@@ -3,6 +3,7 @@ import CodeEntry from "./components/CodeEntry";
 import Scanner from "./components/Scanner";
 import DeviceCard from "./components/DeviceCard";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 
 type AppState = "code-entry" | "scanning" | "results" | "complete";
@@ -318,7 +319,7 @@ function SuccessScreen({ siteName }: { siteName?: string }) {
         AP and finish the setup.
       </p>
       <button
-        onClick={() => window.close()}
+        onClick={() => getCurrentWindow().close()}
         className="mt-4 py-2 px-6 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"
       >
         Close
