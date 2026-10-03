@@ -184,15 +184,6 @@ expect {{
 
     log::info!("set-inform result: {}", useful_output.trim());
 
-    // Check for errors in the output
-    if useful_output.to_lowercase().contains("error")
-        && !useful_output.to_lowercase().contains("inform")
-    {
-        return Err(SshError::CommandFailed(format!(
-            "set-inform returned an error: {}",
-            useful_output.trim(),
-        )));
-    }
-
-    Ok(useful_output.trim().to_string())
+    // The expect script exits with ssh's status, which is the command chain's.
+    crate::inform_result::interpret(&useful_output, output.status.code().map(|c| c as u32)).map_err(SshError::CommandFailed)
 }

@@ -150,6 +150,7 @@ pub async fn set_inform(
 
     // Read response
     let mut output = String::new();
+    let mut exit_status: Option<u32> = None;
     while let Some(msg) = channel.wait().await {
         match msg {
             ChannelMsg::Data { data } => {
@@ -158,8 +159,9 @@ pub async fn set_inform(
             ChannelMsg::ExtendedData { data, .. } => {
                 output.push_str(&String::from_utf8_lossy(&data));
             }
-            ChannelMsg::ExitStatus { exit_status } => {
-                log::info!("set-inform exit status: {}", exit_status);
+            ChannelMsg::ExitStatus { exit_status: code } => {
+                log::info!("set-inform exit status: {}", code);
+                exit_status = Some(code);
             }
             _ => {}
         }
@@ -167,15 +169,5 @@ pub async fn set_inform(
 
     log::info!("set-inform output: {}", output.trim());
 
-    // The set-inform command typically outputs something like:
-    // "Adoption request sent to http://...  Firmware 'BZ.xxx.vX.X.X.xxx.xxx'  AP-ID[...]"
-    // Any output without "error" is generally success
-    if output.to_lowercase().contains("error") && !output.to_lowercase().contains("inform") {
-        return Err(SshError::CommandFailed(format!(
-            "set-inform returned an error: {}",
-            output.trim()
-        )));
-    }
-
-    Ok(output.trim().to_string())
+    crate::inform_result::interpret(&output, exit_status).map_err(SshError::CommandFailed)
 }

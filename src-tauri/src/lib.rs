@@ -1,5 +1,6 @@
 mod api;
 mod discovery;
+mod inform_result;
 mod ssh;
 mod ssh_process;
 
@@ -74,6 +75,16 @@ async fn adopt_device(
     custom_password: Option<String>,
 ) -> Result<AdoptResult, String> {
     let password_ref = custom_password.as_deref();
+
+    // Windows has no `expect`, so the system-ssh path can only fail there (and its error would
+    // name a tool Windows doesn't have): go straight to the built-in SSH client.
+    #[cfg(windows)]
+    {
+        return ssh::set_inform(&ip, &inform_url, password_ref)
+            .await
+            .map(|output| AdoptResult { success: true, output })
+            .map_err(|e| e.to_string());
+    }
 
     // Try system SSH first (uses macOS OpenSSH via expect, proven compatible with Dropbear)
     log::info!("Attempting SSH via system expect command...");

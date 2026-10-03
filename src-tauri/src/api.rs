@@ -4,8 +4,13 @@
 /// the inform URL and site metadata (see design doc §4.6.2).
 use serde::{Deserialize, Serialize};
 
-// Default to the production wizard URL — can be overridden for dev
-const DEFAULT_API_BASE: &str = "https://ubiquitywizard.onrender.com";
+// The server that issues setup codes. Set VIVASPOT_API_BASE when building to point a release at
+// a different server (the dashboard, once the wizard moves there); VIVASPOT_API_URL at run time
+// overrides it for development.
+const DEFAULT_API_BASE: &str = match option_env!("VIVASPOT_API_BASE") {
+    Some(base) => base,
+    None => "https://ubiquitywizard.onrender.com",
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
