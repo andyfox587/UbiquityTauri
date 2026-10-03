@@ -30,6 +30,8 @@ on:
         default: false
   push:
     tags: ["v*"]
+    # Builds this branch on every push while it's being tested; remove before merging.
+    branches: ["feature/signed-release"]
 
 permissions:
   contents: write
