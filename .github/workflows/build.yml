@@ -1,0 +1,138 @@
+# Builds the VivaSpot Setup Assistant for Mac (Intel and Apple chips, one universal app) and
+# Windows. Signing switches on by itself once the secrets below exist; until then the builds
+# are unsigned (fine for testing, not for merchants).
+#
+# Run it: Actions → "Build Setup Assistant" → Run workflow (tick "release" for a draft GitHub
+# release with the installers), or push a tag like v0.4.0.
+#
+# Mac signing + notarisation (Apple Developer Program):
+#   APPLE_CERTIFICATE            the "Developer ID Application" certificate (.p12), base64
+#   APPLE_CERTIFICATE_PASSWORD   the password chosen when exporting the .p12
+#   APPLE_ID                     the Apple Account email used for the developer membership
+#   APPLE_PASSWORD               an app-specific password for that account (account.apple.com)
+#   APPLE_TEAM_ID                the 10-character Team ID (developer.apple.com → Membership)
+# Windows signing (Azure Trusted Signing):
+#   AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID   an app registration with the
+#                                "Trusted Signing Certificate Profile Signer" role
+#   AZURE_SIGNING_ENDPOINT       e.g. https://eus.codesigning.azure.net
+#   AZURE_SIGNING_ACCOUNT        the Trusted Signing account name
+#   AZURE_SIGNING_PROFILE        the certificate profile name
+# Which server issues setup codes (repository variable, optional): VIVASPOT_API_BASE
+
+name: Build Setup Assistant
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Create a draft GitHub release with the installers"
+        type: boolean
+        default: false
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+            bundle: src-tauri/target/universal-apple-darwin/release/bundle
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+            bundle: src-tauri/target/release/bundle
+    runs-on: ${{ matrix.platform }}
+    env:
+      VIVASPOT_API_BASE: ${{ vars.VIVASPOT_API_BASE }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - run: npm ci
+
+      - name: Use Apple signing when it's set up
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          ID: ${{ secrets.APPLE_ID }}
+          PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -z "$CERT" ]; then echo "No Apple certificate yet: building unsigned."; exit 0; fi
+          KEYCHAIN_PASSWORD=$(openssl rand -hex 16)
+          echo "$CERT" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+          IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application" | head -1 | awk -F'"' '{print $2}')
+          if [ -z "$IDENTITY" ]; then echo "::error::No 'Developer ID Application' identity in APPLE_CERTIFICATE"; exit 1; fi
+          echo "Signing as: $IDENTITY"
+          echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          if [ -n "$ID" ] && [ -n "$PASSWORD" ] && [ -n "$TEAM" ]; then
+            { echo "APPLE_ID=$ID"; echo "APPLE_PASSWORD=$PASSWORD"; echo "APPLE_TEAM_ID=$TEAM"; } >> "$GITHUB_ENV"
+          else
+            echo "::warning::Signed but not notarised: add APPLE_ID, APPLE_PASSWORD and APPLE_TEAM_ID."
+          fi
+
+      - name: Use Azure Trusted Signing when it's set up
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CLIENT: ${{ secrets.AZURE_CLIENT_ID }}
+          SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TENANT: ${{ secrets.AZURE_TENANT_ID }}
+          ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
+        run: |
+          if [ -z "$CLIENT" ] || [ -z "$ENDPOINT" ]; then echo "No Azure signing yet: building unsigned."; exit 0; fi
+          cargo install trusted-signing-cli --locked
+          { echo "AZURE_CLIENT_ID=$CLIENT"; echo "AZURE_CLIENT_SECRET=$SECRET"; echo "AZURE_TENANT_ID=$TENANT"; } >> "$GITHUB_ENV"
+          # Tauri merges tauri.windows.conf.json over tauri.conf.json on Windows.
+          printf '{ "bundle": { "windows": { "signCommand": "trusted-signing-cli -e %s -a %s -c %s -d VivaSpotSetupAssistant %%1" } } }\n' "$ENDPOINT" "$ACCOUNT" "$PROFILE" > src-tauri/tauri.windows.conf.json
+
+      - name: Build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+          tagName: ${{ (github.ref_type == 'tag' || inputs.release) && 'v__VERSION__' || '' }}
+          releaseName: ${{ (github.ref_type == 'tag' || inputs.release) && 'VivaSpot Setup Assistant v__VERSION__' || '' }}
+          releaseBody: "Installers for Mac (Intel and Apple chips) and Windows."
+          releaseDraft: true
+
+      - name: Keep the installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: setup-assistant-${{ runner.os }}
+          path: |
+            ${{ matrix.bundle }}/dmg/*.dmg
+            ${{ matrix.bundle }}/nsis/*.exe
+            ${{ matrix.bundle }}/msi/*.msi
+          if-no-files-found: error
