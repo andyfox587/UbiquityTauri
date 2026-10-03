@@ -12,18 +12,23 @@ export default function CodeEntry({ onSubmit, error, initialCode }: CodeEntryPro
   const [loading, setLoading] = useState(false);
   const autoSubmittedRef = useRef(false);
 
-  // Auto-fill and auto-submit when launched via deep link
+  // Auto-fill and auto-submit when launched via deep link.
+  // Brief delay so the user sees the code before validation begins.
   useEffect(() => {
     if (initialCode && !autoSubmittedRef.current) {
       autoSubmittedRef.current = true;
       setCode(initialCode);
-      setLoading(true);
-      const result = onSubmit(initialCode.trim().toUpperCase());
-      if (result && typeof result.then === "function") {
-        result.finally(() => setLoading(false));
-      } else {
-        setLoading(false);
-      }
+      // Show the code for 1.5 seconds before auto-submitting
+      const timer = setTimeout(() => {
+        setLoading(true);
+        const result = onSubmit(initialCode.trim().toUpperCase());
+        if (result && typeof result.then === "function") {
+          result.finally(() => setLoading(false));
+        } else {
+          setLoading(false);
+        }
+      }, 1500);
+      return () => clearTimeout(timer);
     }
   }, [initialCode, onSubmit]);
 

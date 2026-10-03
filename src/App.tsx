@@ -106,9 +106,10 @@ export default function App() {
       setDevices(result.devices);
       setState("results");
     } catch (err) {
-      // Auto-retry once on network errors (common on cold launch)
-      if (retryCount < 1) {
-        await new Promise((r) => setTimeout(r, 2000));
+      // Auto-retry up to 2 times on network errors (common on cold launch)
+      if (retryCount < 2) {
+        const delay = retryCount === 0 ? 2000 : 3000;
+        await new Promise((r) => setTimeout(r, delay));
         return doScan(retryCount + 1);
       }
       setError(String(err));
