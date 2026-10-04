@@ -129,6 +129,24 @@ jobs:
           releaseBody: "Installers for Mac (Intel and Apple chips) and Windows."
           releaseDraft: true
 
+      # Tauri notarises the app inside; the .dmg around it needs its own notarisation, or a Mac can
+      # still warn when a merchant opens the download.
+      - name: Notarise the Mac download too
+        if: runner.os == 'macOS' && env.APPLE_ID != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASING: ${{ (github.ref_type == 'tag' || inputs.release) && 'yes' || '' }}
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          for DMG in "${{ matrix.bundle }}"/dmg/*.dmg; do
+            xcrun notarytool submit "$DMG" --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+            xcrun stapler staple "$DMG"
+            xcrun stapler validate "$DMG"
+            # tauri-action already uploaded the un-notarised .dmg to the draft release: replace it.
+            if [ -n "$RELEASING" ]; then gh release upload "v$VERSION" "$DMG" --clobber; fi
+          done
+
       - name: Keep the installers
         uses: actions/upload-artifact@v4
         with:
