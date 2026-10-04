@@ -40,6 +40,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("");
   const [deepLinkCode, setDeepLinkCode] = useState<string | null>(null);
+  // The access point that was connected: its MAC goes into the VivaSpot dashboard to finish.
+  const [connected, setConnected] = useState<Device | null>(null);
 
   useEffect(() => {
     invoke<string>("get_app_version").then(setAppVersion).catch(() => {});
@@ -123,30 +125,32 @@ export default function App() {
     await doScan(0);
   };
 
-  const handleAdopt = async (ip: string) => {
+  const handleAdopt = async (device: Device) => {
     if (!siteInfo) return;
     setError(null);
     try {
       await invoke<AdoptResult>("adopt_device", {
-        ip,
+        ip: device.ip,
         informUrl: siteInfo.informUrl,
         customPassword: null,
       });
+      setConnected(device);
       setState("complete");
     } catch (err) {
       setError(String(err));
     }
   };
 
-  const handleAdoptWithPassword = async (ip: string, password: string) => {
+  const handleAdoptWithPassword = async (device: Device, password: string) => {
     if (!siteInfo) return;
     setError(null);
     try {
       await invoke<AdoptResult>("adopt_device", {
-        ip,
+        ip: device.ip,
         informUrl: siteInfo.informUrl,
         customPassword: password,
       });
+      setConnected(device);
       setState("complete");
     } catch (err) {
       setError(String(err));
@@ -221,9 +225,9 @@ export default function App() {
                     <DeviceCard
                       key={device.mac}
                       device={device}
-                      onAdopt={() => handleAdopt(device.ip)}
+                      onAdopt={() => handleAdopt(device)}
                       onAdoptWithPassword={(password) =>
-                        handleAdoptWithPassword(device.ip, password)
+                        handleAdoptWithPassword(device, password)
                       }
                     />
                   ))}
@@ -244,7 +248,7 @@ export default function App() {
             </div>
           )}
 
-          {state === "complete" && <SuccessScreen siteName={siteInfo?.siteName} />}
+          {state === "complete" && <SuccessScreen siteName={siteInfo?.siteName} mac={connected?.mac} />}
         </div>
       </main>
     </div>
@@ -294,7 +298,19 @@ function NoDevicesFound({ onRescan }: { onRescan: () => void }) {
   );
 }
 
-function SuccessScreen({ siteName }: { siteName?: string }) {
+function SuccessScreen({ siteName, mac }: { siteName?: string; mac?: string }) {
+  const [copied, setCopied] = useState(false);
+  const shown = mac?.toUpperCase();
+  const copy = async () => {
+    if (!shown) return;
+    try {
+      await navigator.clipboard.writeText(shown);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // It's on screen to type.
+    }
+  };
   return (
     <div className="text-center space-y-4">
       <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto">
@@ -315,10 +331,20 @@ function SuccessScreen({ siteName }: { siteName?: string }) {
       <h2 className="text-2xl font-bold text-vivaspot-dark">You're all set!</h2>
       <p className="text-gray-600">
         Your access point is now connected to VivaSpot
-        {siteName ? ` for ${siteName}` : ""}. You can close this app and go back
-        to the setup wizard in your browser — it will automatically detect your
-        AP and finish the setup.
+        {siteName ? ` for ${siteName}` : ""}. One step left: go back to Connect
+        your WiFi in your VivaSpot dashboard and add it with this MAC address.
       </p>
+      {shown && (
+        <div className="flex items-center justify-center gap-3">
+          <span className="font-mono text-2xl font-bold tracking-wider text-vivaspot-dark">{shown}</span>
+          <button
+            onClick={copy}
+            className="py-1.5 px-3 bg-vivaspot-light text-vivaspot-primary rounded-lg text-sm font-medium hover:opacity-80 transition-opacity"
+          >
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
+      )}
       <button
         onClick={() => getCurrentWindow().close()}
         className="mt-4 py-2 px-6 bg-gray-200 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors"

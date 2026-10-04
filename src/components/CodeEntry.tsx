@@ -69,7 +69,7 @@ export default function CodeEntry({ onSubmit, error, initialCode }: CodeEntryPro
             <>Validating setup code <span className="font-mono font-bold">{initialCode}</span>...</>
           ) : (
             <>
-              You'll find this code in the VivaSpot setup wizard in your browser.
+              You'll find this code on the Connect your WiFi page of your VivaSpot dashboard.
               <br />
               It looks like <span className="font-mono font-bold">VS-7K2M</span>.
             </>
